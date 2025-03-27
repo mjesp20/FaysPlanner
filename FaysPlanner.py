@@ -1,7 +1,7 @@
 import tkinter as tk
-from tkinter import ttk, scrolledtext
+from tkinter import ttk, scrolledtext, filedialog
 import random
-
+import os
 
 # Define class-to-role mapping
 class_roles = {
@@ -34,6 +34,48 @@ player_classes = {}
 
 # Dictionary to store selected values for each row
 selected_values = {}
+
+# Configuration file for saving last used path
+CONFIG_FILE = "faysplanner_config.txt"
+
+
+# Function to save last used file path
+def save_last_path(path):
+    try:
+        with open(CONFIG_FILE, 'w') as f:
+            f.write(path)
+    except Exception as e:
+        print(f"Error saving config: {e}")
+
+
+# Function to load last used file path
+def load_last_path():
+    try:
+        if os.path.exists(CONFIG_FILE):
+            with open(CONFIG_FILE, 'r') as f:
+                return f.read().strip()
+    except Exception as e:
+        print(f"Error loading config: {e}")
+    return ""
+
+
+# Function to handle file import
+def import_file():
+    last_path = load_last_path()
+    filename = filedialog.askopenfilename(
+        title="Select Player Data File",
+        initialdir=os.path.dirname(last_path) if last_path else os.getcwd(),
+        filetypes=[("Text files", "*.txt"), ("All files", "*.*")]
+    )
+
+    if filename:
+        save_last_path(filename)
+        try:
+            with open(filename, 'r') as f:
+                data = f.read()
+            process_player_data(data)
+        except Exception as e:
+            tk.messagebox.showerror("Import Error", f"Could not read file: {e}")
 
 
 # Function to handle the paste data window
@@ -226,12 +268,14 @@ def generate_button_clicked():
     # Create 8 groups
     groups = [[] for _ in range(8)]
 
-    # Assign 1 melee DPS per group (up to 8)
-    for i in range(min(8, len(melee_dps))):
-        groups[i].append(melee_dps.pop(0))
+    # Check 1 melee mode checkbox
+    one_melee_mode = one_melee_var.get()
 
-    for i in range(min(8, len(melee_dps))):
-        groups[i].append(melee_dps.pop(0))
+    # Assign 1 or 2 melee DPS per group
+    melee_assignments = 1 if one_melee_mode else 2
+    for _ in range(melee_assignments):
+        for i in range(min(8, len(melee_dps))):
+            groups[i].append(melee_dps.pop(0))
 
     # Assign 1 healer per group (up to 8)
     for i in range(min(8, len(healers))):
@@ -336,13 +380,6 @@ def generate_button_clicked():
         print(f"Group {i + 1}: {group}")
 
 
-# Function to open the paste window again
-def open_paste_window():
-    create_paste_window()
-
-
-
-
 # Initialize main application
 window = tk.Tk()
 window.title("FaysPlanner")
@@ -419,17 +456,21 @@ tree.bind("<ButtonRelease-1>", handle_click)
 button_frame = tk.Frame(window)
 button_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=10)
 
+# One melee mode checkbox
+one_melee_var = tk.BooleanVar(value=False)
+one_melee_checkbox = tk.Checkbutton(button_frame, text="1 Melee Mode", variable=one_melee_var)
+one_melee_checkbox.pack(side=tk.LEFT, padx=10)
+
 # Generate button
 generate_button = tk.Button(button_frame, text="Generate", command=generate_button_clicked)
 generate_button.pack(side=tk.RIGHT, padx=10)
 
-# Add Import Data button to open paste window again
-import_button = tk.Button(button_frame, text="Import Data", command=open_paste_window)
-import_button.pack(side=tk.RIGHT, padx=10)
+# Add Manual Import button to open paste window
+manual_import_button = tk.Button(button_frame, text="Manual Import", command=create_paste_window)
+manual_import_button.pack(side=tk.RIGHT, padx=10)
 
-
-# Show paste window on startup
-window.after(100, create_paste_window)
+# Add File Import button
+file_import_button = tk.Button(button_frame, text="Import File", command=import_file)
+file_import_button.pack(side=tk.RIGHT, padx=10)
 
 window.mainloop()
-
