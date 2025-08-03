@@ -35,6 +35,9 @@ player_classes = {}
 # Dictionary to store selected values for each row
 selected_values = {}
 
+# Set to store priority melee players
+priority_melee = set()
+
 # Configuration file for saving last used path
 CONFIG_FILE = "faysplanner_config.txt"
 
@@ -126,6 +129,7 @@ def process_player_data(data):
 
     player_classes.clear()
     selected_values.clear()
+    priority_melee.clear()  # Clear priority melee when loading new data
 
     # Process each line
     lines = data.strip().split('\n')
@@ -144,8 +148,8 @@ def process_player_data(data):
                 # Set default role based on class
                 default_role = class_roles.get(player_class, None)
 
-                # Create values with radio buttons
-                values = [name, "○", "○", "○"]
+                # Create values with radio buttons and priority checkbox
+                values = [name, "○", "○", "○", "[ ]"]
 
                 # Set the default role if one exists
                 if default_role:
@@ -161,7 +165,7 @@ def process_player_data(data):
                 selected_values[item_id] = default_role
 
 
-# Function to handle click events for radio button behavior
+# Function to handle click events for radio button behavior and priority checkbox
 def handle_click(event):
     # Get the clicked item and column
     item_id = tree.identify_row(event.y)
@@ -171,16 +175,48 @@ def handle_click(event):
     column = tree.identify_column(event.x)
     column_idx = int(column[1:]) - 1  # Convert '#2' to 1 (0-based index)
 
-    # Only process clicks on columns m, h, or r (indexes 1, 2, 3)
-    if column_idx < 1 or column_idx > 3:
-        return
-
     # Get current values
     values = list(tree.item(item_id, "values"))
+    player_name = values[0]
+
+    # Handle priority checkbox (column 4, index 4)
+    if column_idx == 4:
+        # Only allow priority for melee players
+        current_role = selected_values.get(item_id)
+        if current_role != "m":
+            tk.messagebox.showwarning("Priority Error", "Only melee DPS players can be set as priority!")
+            return
+        
+        # Check if we already have 8 priority melee and trying to add another
+        if values[4] == "☐" and len(priority_melee) >= 8:
+            tk.messagebox.showwarning("Priority Limit", "You can only have 8 priority melee players!")
+            return
+        
+        # Toggle priority checkbox
+        if values[4] == "[ ]":
+            values[4] = "[✓]"
+            priority_melee.add(player_name)
+        else:
+            values[4] = "[ ]"
+            priority_melee.discard(player_name)
+        
+        tree.item(item_id, values=values)
+        update_priority_count_label()
+        return
+
+    # Handle role selection (columns 1, 2, 3)
+    if column_idx < 1 or column_idx > 3:
+        return
 
     # Column names corresponding to indices
     col_names = ["Name", "m", "h", "r"]
     selected_col = col_names[column_idx]
+
+    # If changing from melee to another role, remove from priority
+    if selected_values.get(item_id) == "m" and selected_col != "m":
+        if player_name in priority_melee:
+            priority_melee.discard(player_name)
+            values[4] = "[ ]"  # Uncheck priority
 
     # Reset all radio buttons in this row
     values[1] = "○"  # m
@@ -195,8 +231,21 @@ def handle_click(event):
 
     # Store the selected value
     selected_values[item_id] = selected_col
-
+    
+    update_priority_count_label()
     print(f"Player: {values[0]}, Role: {selected_col}")
+
+
+# Function to update the priority count label
+def update_priority_count_label():
+    count = len(priority_melee)
+    priority_count_label.config(text=f"Priority Melee: {count}/8")
+    if count == 8:
+        priority_count_label.config(fg="green")
+    elif count > 8:
+        priority_count_label.config(fg="red")
+    else:
+        priority_count_label.config(fg="black")
 
 
 # Function to get all current selections
@@ -243,7 +292,7 @@ def clear_tables():
     table2_cells.clear()
 
 
-# Function to generate groups based on selections
+# Function to generate groups based on selections with priority system
 def generate_button_clicked():
     selections = get_selections()
 
@@ -260,8 +309,12 @@ def generate_button_clicked():
         elif role == "r":
             ranged_dps.append(name)
 
-    # Shuffle players within each role for randomness
-    random.shuffle(melee_dps)
+    # Separate priority and non-priority melee
+    priority_melee_available = [name for name in melee_dps if name in priority_melee]
+    non_priority_melee = [name for name in melee_dps if name not in priority_melee]
+    
+    # Shuffle non-priority melee for randomness
+    random.shuffle(non_priority_melee)
     random.shuffle(healers)
     random.shuffle(ranged_dps)
 
@@ -271,11 +324,28 @@ def generate_button_clicked():
     # Check 1 melee mode checkbox
     one_melee_mode = one_melee_var.get()
 
-    # Assign 1 or 2 melee DPS per group
+    # Assign melee DPS per group with priority system
     melee_assignments = 1 if one_melee_mode else 2
-    for _ in range(melee_assignments):
-        for i in range(min(8, len(melee_dps))):
-            groups[i].append(melee_dps.pop(0))
+    
+    # First, assign priority melee (up to 8 groups, 1 per group for first assignment)
+    assigned_priority = 0
+    for assignment_round in range(melee_assignments):
+        for group_idx in range(8):
+            if assignment_round == 0:
+                # First round: prioritize priority melee
+                if assigned_priority < len(priority_melee_available):
+                    groups[group_idx].append(priority_melee_available[assigned_priority])
+                    assigned_priority += 1
+                elif non_priority_melee:
+                    groups[group_idx].append(non_priority_melee.pop(0))
+            else:
+                # Second round (if not in 1 melee mode): assign remaining melee
+                remaining_priority = priority_melee_available[assigned_priority:] if assigned_priority < len(priority_melee_available) else []
+                if remaining_priority:
+                    groups[group_idx].append(remaining_priority.pop(0))
+                    assigned_priority += 1
+                elif non_priority_melee:
+                    groups[group_idx].append(non_priority_melee.pop(0))
 
     # Assign 1 healer per group (up to 8)
     for i in range(min(8, len(healers))):
@@ -294,7 +364,8 @@ def generate_button_clicked():
         groups[group_idx].append(ranged)
 
     # Assign remaining melee DPS randomly (these will be sitting out if all groups are full)
-    for melee in melee_dps:
+    remaining_melee = non_priority_melee + priority_melee_available[assigned_priority:]
+    for melee in remaining_melee:
         # Find group with fewest members
         group_idx = min(range(8), key=lambda i: len(groups[i]))
         groups[group_idx].append(melee)
@@ -320,8 +391,9 @@ def generate_button_clicked():
                 cell_frame = tk.Frame(group1_4_content, bg=bg_color, bd=1, relief=tk.SOLID)
                 cell_frame.grid(row=row_idx, column=col_idx, sticky="nsew", padx=1, pady=1)
 
-                # Create a label inside the frame
-                cell_label = tk.Label(cell_frame, text=player_name, bg=bg_color)
+                # Create a label inside the frame, add ★ for priority melee
+                display_name = f"★{player_name}" if player_name in priority_melee else player_name
+                cell_label = tk.Label(cell_frame, text=display_name, bg=bg_color)
                 cell_label.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
 
                 table1_row.append(cell_frame)
@@ -351,8 +423,9 @@ def generate_button_clicked():
                 cell_frame = tk.Frame(group5_8_content, bg=bg_color, bd=1, relief=tk.SOLID)
                 cell_frame.grid(row=row_idx, column=col_idx, sticky="nsew", padx=1, pady=1)
 
-                # Create a label inside the frame
-                cell_label = tk.Label(cell_frame, text=player_name, bg=bg_color)
+                # Create a label inside the frame, add ★ for priority melee
+                display_name = f"★{player_name}" if player_name in priority_melee else player_name
+                cell_label = tk.Label(cell_frame, text=display_name, bg=bg_color)
                 cell_label.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
 
                 table2_row.append(cell_frame)
@@ -378,12 +451,13 @@ def generate_button_clicked():
     print("\nGroup assignments:")
     for i, group in enumerate(groups):
         print(f"Group {i + 1}: {group}")
+    print(f"Priority melee used: {[name for name in priority_melee_available[:assigned_priority]]}")
 
 
 # Initialize main application
 window = tk.Tk()
-window.title("FaysPlanner")
-window.geometry("1400x900")
+window.title("FaysPlanner - Enhanced with Priority System")
+window.geometry("1500x900")
 
 # Create a style
 style = ttk.Style()
@@ -394,28 +468,30 @@ main_frame = ttk.Frame(window)
 main_frame.pack(fill=tk.BOTH, expand=True)
 
 # Left frame for the PlayerTable
-left_frame = ttk.Frame(main_frame, width=600)
+left_frame = ttk.Frame(main_frame, width=650)  # Increased width for priority column
 left_frame.pack(side=tk.LEFT, fill=tk.Y, expand=True)
 left_frame.pack_propagate(False)  # Prevent frame from resizing to fit contents
 
 # Right frame for the two stacked tables
-right_frame = ttk.Frame(main_frame, width=800)
+right_frame = ttk.Frame(main_frame, width=850)
 right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 right_frame.pack_propagate(False)  # Prevent frame from resizing to fit contents
 
-# Player Table (left side) with radio button behavior
-tree = ttk.Treeview(left_frame, columns=("Name", "m", "h", "r"), show='headings')
+# Player Table (left side) with radio button behavior and priority checkbox
+tree = ttk.Treeview(left_frame, columns=("Name", "m", "h", "r", "Priority"), show='headings')
 tree.pack(fill=tk.BOTH, expand=True)
 
 tree.heading("Name", text="Name")
 tree.heading("m", text="Melee DPS")
 tree.heading("h", text="Healer")
 tree.heading("r", text="Ranged DPS")
+tree.heading("Priority", text="Priority (Click to Toggle)")
 
 tree.column("Name", width=150, minwidth=100)
 tree.column("m", width=80, anchor=tk.CENTER)
 tree.column("h", width=80, anchor=tk.CENTER)
 tree.column("r", width=80, anchor=tk.CENTER)
+tree.column("Priority", width=120, anchor=tk.CENTER)
 
 # Create tags for each class with their color
 for class_name, color in class_colors.items():
@@ -455,6 +531,10 @@ tree.bind("<ButtonRelease-1>", handle_click)
 # Create a button frame at the bottom
 button_frame = tk.Frame(window)
 button_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=10)
+
+# Priority count label
+priority_count_label = tk.Label(button_frame, text="Priority Melee: 0/8", font=('Helvetica', 10, 'bold'))
+priority_count_label.pack(side=tk.LEFT, padx=10)
 
 # One melee mode checkbox
 one_melee_var = tk.BooleanVar(value=False)
